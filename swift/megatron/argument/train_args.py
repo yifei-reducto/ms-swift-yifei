@@ -21,8 +21,8 @@ class MegatronTrainArguments(MegatronArguments, BaseArguments):
 
     def init_model_args(self, tokenizer, config):
         kwargs = self.megatron_model_meta.convert_hf_config(config)
-        if self.new_special_tokens and kwargs['padded_vocab_size'] < len(tokenizer):
-            kwargs['padded_vocab_size'] = math.ceil(len(tokenizer) / 128) * 128
+        if self.new_special_tokens:
+            kwargs['padded_vocab_size'] = math.ceil((151936 + 2000) / 128) * 128
             self.initialize_embedding = True
         logger.info(f'megatron_config: {kwargs}')
         for k, v in kwargs.items():
