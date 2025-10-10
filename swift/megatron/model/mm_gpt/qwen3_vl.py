@@ -500,18 +500,49 @@ def convert_hf2mcore_qwen3_vl(hf_model, mg_model):
     mg_model.visual.visual.load_state_dict(hf_model.model.visual.state_dict())
 
 
-def convert_mcore2hf_qwen3_vl(hf_model, mg_model):
+def convert_mcore2hf_qwen3_vl(hf_model, mg_model, tokenizer=None, pad_multiple=128):
+    import math, torch
+
     language_model = hf_model.model.language_model
     mg_language_model = mg_model.language_model
     args = get_args()
-    language_model.embed_tokens.weight.data.copy_(mg_language_model.embedding.word_embeddings.weight)
-    if args.untie_embeddings_and_output_weights:
-        lm_head_weight = hf_model.score.weight if args.task_type == 'seq_cls' else hf_model.lm_head.weight
-        lm_head_weight.data.copy_(mg_language_model.output_layer.weight)
-    language_model.norm.weight.data.copy_(mg_language_model.decoder.final_layernorm.weight)
-    for layer_idx in range(args.num_layers):
-        set_layer_state_mcore2hf(args, mg_language_model, language_model, layer_idx)
+
+    # 1) Read Megatron's true vocab size
+    mg_vocab_size = mg_language_model.embedding.word_embeddings.weight.shape[0]
+
+    # 2) Make sure HF side uses the same size (resize both embeddings and LM head)
+    # If you pass tokenizer, let HF track the same size; otherwise just resize the model.
+    if tokenizer is not None and len(tokenizer) != mg_vocab_size:
+        # Optionally pad tokenizer with dummy tokens so lengths match exactly
+        extra = mg_vocab_size - len(tokenizer)
+        if extra > 0:
+            tokenizer.add_tokens([f"<pad_extra_{i}>" for i in range(extra)])
+    # Resize model embeddings/lm_head to match Megatron size exactly
+    hf_model.resize_token_embeddings(mg_vocab_size)
+    hf_model.config.vocab_size = mg_vocab_size
+
+    # If weights are tied in this arch, ensure tying happens after resize
+    if hasattr(hf_model, "tie_weights"):
+        hf_model.tie_weights()
+
+    # 3) Now copies will succeed 1:1
+    with torch.no_grad():
+        language_model.embed_tokens.weight.data.copy_(
+            mg_language_model.embedding.word_embeddings.weight
+        )
+        if args.untie_embeddings_and_output_weights:
+            lm_head_weight = hf_model.score.weight if args.task_type == 'seq_cls' else hf_model.lm_head.weight
+            lm_head_weight.data.copy_(mg_language_model.output_layer.weight)
+        language_model.norm.weight.data.copy_(
+            mg_language_model.decoder.final_layernorm.weight
+        )
+
+        for layer_idx in range(args.num_layers):
+            set_layer_state_mcore2hf(args, mg_language_model, language_model, layer_idx)
+
+    # 4) Visual tower
     hf_model.model.visual.load_state_dict(mg_model.visual.visual.state_dict())
+
 
 
 class Qwen3VL_Vit(HuggingFaceModule):
