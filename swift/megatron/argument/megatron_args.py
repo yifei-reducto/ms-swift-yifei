@@ -137,8 +137,7 @@ class ExtraMegatronArguments(RLHFMegatronArgumentsMixin, MegatronTunerMixin):
                 if old_value is not None:
                     res[key] = old_value
             res.pop('adapter_load', None)
-            if res['train_type'] != 'lora':
-                res.pop('load')
+            print(res)
         return res
 
 
