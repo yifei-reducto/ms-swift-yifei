@@ -221,7 +221,7 @@ class SoftOverlong(ORM):
             completion_length = len(ids)
             expected_len = self.soft_max_length - self.soft_cache_length
             exceed_len = completion_length - expected_len
-            rewards.append(min(-exceed_len / self.soft_cache_length, 0))
+            rewards.append(max(min(-exceed_len / self.soft_cache_length, 0), -0.5))
         return rewards
 
 
