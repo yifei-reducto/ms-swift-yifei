@@ -1,7 +1,7 @@
 #!/bin/bash
 # GRPO training script for table parsing (table image to HTML)
 # Model: Qwen/Qwen3-VL-4B-Thinking
-# Dataset: apoidea/fintabnet-html:en (1000 samples from English subset)
+# Dataset: Local JSONL (run examples/table_grpo/prepare_dataset.py to generate)
 # Reward functions: TEDS and GriTS
 # Hardware: 8 x H100 GPUs
 
@@ -13,8 +13,7 @@ NPROC_PER_NODE=8 \
 swift rlhf \
     --rlhf_type grpo \
     --model Qwen/Qwen3-VL-4B-Thinking \
-    --dataset apoidea/fintabnet-html:en#1000 \
-    --columns '{"image": "images"}' \
+    --dataset examples/table_grpo/train_table_grpo.jsonl \
     --load_from_cache_file true \
     --use_vllm true \
     --vllm_mode colocate \

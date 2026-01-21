@@ -147,6 +147,10 @@ megatron_output/
 /*_cached_dataset/
 /sample_output/
 
+# Table GRPO dataset (images and jsonl)
+/examples/table_grpo/images/
+/examples/table_grpo/*.jsonl
+
 # Pytorch
 *.pth
 *.pt
