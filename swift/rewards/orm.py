@@ -914,6 +914,83 @@ class TableFormat(ORM):
         return rewards
 
 
+class ThinkingLengthPenalty(ORM):
+    """Penalty if thinking content is longer than the actual table output.
+
+    Applies a -0.2 penalty when the <think>...</think> content is longer
+    than the actual output (content after thinking).
+    """
+
+    def __call__(self, completions, **kwargs) -> List[float]:
+        rewards = []
+        for completion in completions:
+            # Extract thinking content length
+            think_match = re.search(r'<think>(.*?)</think>', completion, re.DOTALL | re.IGNORECASE)
+            think_len = len(think_match.group(1)) if think_match else 0
+
+            # Extract output length (content after </think> or whole completion if no thinking)
+            if '</think>' in completion.lower():
+                output = re.split(r'</think>', completion, flags=re.IGNORECASE)[-1]
+            else:
+                output = completion
+            output_len = len(output.strip())
+
+            # Apply penalty if thinking is longer than output
+            if think_len > output_len and output_len > 0:
+                rewards.append(-0.2)
+            else:
+                rewards.append(0.0)
+        return rewards
+
+
+class TableLengthPenalty(ORM):
+    """Penalty for output table being longer than groundtruth.
+
+    - No penalty if output is ≤10% longer than groundtruth
+    - -0.1 penalty for every 10% beyond the 10% threshold
+
+    Example: 35% longer → -0.1 * (35-10)/10 = -0.25
+    """
+
+    def extract_table(self, completion: str) -> str:
+        """Extract table content from completion, removing thinking tokens."""
+        # Remove thinking tokens
+        completion = re.sub(r'<think>.*?</think>', '', completion, flags=re.DOTALL | re.IGNORECASE)
+        if '</think>' in completion.lower():
+            parts = re.split(r'</think>', completion, flags=re.IGNORECASE)
+            completion = parts[-1] if len(parts) > 1 else completion
+
+        # Extract table element
+        table_match = re.search(r'(<table.*?</table>)', completion, re.DOTALL | re.IGNORECASE)
+        if table_match:
+            return table_match.group(1)
+        return completion.strip()
+
+    def __call__(self, completions, html_table, **kwargs) -> List[float]:
+        rewards = []
+        for completion, gt in zip(completions, html_table):
+            # Extract table from completion
+            pred_table = self.extract_table(completion)
+
+            pred_len = len(pred_table)
+            gt_len = len(gt)
+
+            if gt_len == 0:
+                rewards.append(0.0)
+                continue
+
+            # Calculate percentage longer
+            extra_percentage = ((pred_len - gt_len) / gt_len) * 100
+
+            # Apply penalty: -0.1 for every 10% beyond 10% threshold
+            if extra_percentage > 10:
+                penalty = -0.1 * (extra_percentage - 10) / 10
+                rewards.append(penalty)
+            else:
+                rewards.append(0.0)
+        return rewards
+
+
 orms = {
     'toolbench': ReactORM,
     'math': MathORM,
@@ -929,4 +1006,6 @@ orms = {
     'grits_top': GriTSTop,
     'grits_loc': GriTSLoc,
     'table_format': TableFormat,
+    'thinking_length_penalty': ThinkingLengthPenalty,
+    'table_length_penalty': TableLengthPenalty,
 }
