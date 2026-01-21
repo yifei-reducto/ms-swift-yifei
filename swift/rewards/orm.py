@@ -598,9 +598,22 @@ class TEDS(ORM):
         return max(0.0, teds)
 
     def extract_html_from_completion(self, completion: str) -> str:
-        """Extract HTML table from model completion."""
-        # Try to find HTML table in various formats
-        import re
+        """Extract HTML table from model completion.
+
+        Handles thinking models by removing <think>...</think> content first,
+        so only the final output is used for reward calculation.
+        """
+        # Remove thinking tokens (for models like Qwen3-VL-Thinking)
+        # First try to remove complete <think>...</think> blocks
+        completion = re.sub(r'<think>.*?</think>', '', completion, flags=re.DOTALL | re.IGNORECASE)
+        # Handle unclosed thinking tags - take content after </think>
+        if '</think>' in completion.lower():
+            parts = re.split(r'</think>', completion, flags=re.IGNORECASE)
+            completion = parts[-1] if len(parts) > 1 else completion
+        # Handle case where only <think> exists (content before it or discard thinking content)
+        if '<think>' in completion.lower():
+            parts = re.split(r'<think>', completion, flags=re.IGNORECASE)
+            completion = parts[0] if parts[0].strip() else (parts[-1] if len(parts) > 1 else completion)
 
         # Look for table within code blocks
         code_block_match = re.search(r'```(?:html)?\s*(.*?)```', completion, re.DOTALL | re.IGNORECASE)
@@ -809,8 +822,22 @@ class GriTS(ORM):
         return total_sim / total_cells if total_cells > 0 else 0.0
 
     def extract_html_from_completion(self, completion: str) -> str:
-        """Extract HTML table from model completion."""
-        import re
+        """Extract HTML table from model completion.
+
+        Handles thinking models by removing <think>...</think> content first,
+        so only the final output is used for reward calculation.
+        """
+        # Remove thinking tokens (for models like Qwen3-VL-Thinking)
+        # First try to remove complete <think>...</think> blocks
+        completion = re.sub(r'<think>.*?</think>', '', completion, flags=re.DOTALL | re.IGNORECASE)
+        # Handle unclosed thinking tags - take content after </think>
+        if '</think>' in completion.lower():
+            parts = re.split(r'</think>', completion, flags=re.IGNORECASE)
+            completion = parts[-1] if len(parts) > 1 else completion
+        # Handle case where only <think> exists (content before it or discard thinking content)
+        if '<think>' in completion.lower():
+            parts = re.split(r'<think>', completion, flags=re.IGNORECASE)
+            completion = parts[0] if parts[0].strip() else (parts[-1] if len(parts) > 1 else completion)
 
         code_block_match = re.search(r'```(?:html)?\s*(.*?)```', completion, re.DOTALL | re.IGNORECASE)
         if code_block_match:
@@ -859,10 +886,18 @@ class TableFormat(ORM):
     """Reward function that checks if the completion contains valid HTML table format."""
 
     def __call__(self, completions, **kwargs) -> List[float]:
-        """Check if completions contain valid HTML table structure."""
-        import re
+        """Check if completions contain valid HTML table structure.
+
+        Handles thinking models by removing <think>...</think> content first.
+        """
         rewards = []
         for completion in completions:
+            # Remove thinking tokens (for models like Qwen3-VL-Thinking)
+            completion = re.sub(r'<think>.*?</think>', '', completion, flags=re.DOTALL | re.IGNORECASE)
+            if '</think>' in completion.lower():
+                parts = re.split(r'</think>', completion, flags=re.IGNORECASE)
+                completion = parts[-1] if len(parts) > 1 else completion
+
             # Check for basic HTML table structure
             has_table = bool(re.search(r'<table.*?>.*?</table>', completion, re.DOTALL | re.IGNORECASE))
             has_rows = bool(re.search(r'<tr.*?>.*?</tr>', completion, re.DOTALL | re.IGNORECASE))
