@@ -444,6 +444,441 @@ class MathORM(ORM):
         return rewards
 
 
+class TEDS(ORM):
+    """Tree Edit Distance-based Similarity (TEDS) reward for table structure recognition.
+
+    TEDS measures the similarity between predicted and ground truth HTML tables
+    by computing tree edit distance on their DOM tree representations.
+
+    Reference: https://arxiv.org/abs/1911.10683
+    """
+
+    def __init__(self, structure_only: bool = False):
+        """Initialize TEDS reward.
+
+        Args:
+            structure_only: If True, only compare table structure without text content.
+        """
+        self.structure_only = structure_only
+        try:
+            from lxml import etree
+        except ImportError as e:
+            raise ImportError(
+                'The lxml package is required but not installed. '
+                "Please install it using 'pip install lxml'.") from e
+
+    @staticmethod
+    def tokenize(text: str) -> List[str]:
+        """Tokenize text for comparison."""
+        if not text:
+            return []
+        return text.strip().split()
+
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """Normalize text by stripping whitespace."""
+        if text is None:
+            return ''
+        return ' '.join(text.split())
+
+    def tree_to_list(self, root, structure_only: bool = False) -> List[str]:
+        """Convert HTML tree to a list representation for edit distance."""
+        from lxml import etree
+
+        def traverse(node, depth=0):
+            result = []
+            if isinstance(node.tag, str):
+                tag = node.tag.lower()
+                if tag in ('table', 'thead', 'tbody', 'tr', 'td', 'th'):
+                    # Include colspan and rowspan attributes
+                    attrs = []
+                    colspan = node.get('colspan', '1')
+                    rowspan = node.get('rowspan', '1')
+                    if colspan != '1':
+                        attrs.append(f'colspan={colspan}')
+                    if rowspan != '1':
+                        attrs.append(f'rowspan={rowspan}')
+                    tag_str = f'<{tag} {" ".join(attrs)}>' if attrs else f'<{tag}>'
+                    result.append(tag_str)
+
+                    if not structure_only and tag in ('td', 'th'):
+                        text = self.normalize_text(node.text or '')
+                        tail_text = ''
+                        for child in node:
+                            if child.tail:
+                                tail_text += ' ' + self.normalize_text(child.tail)
+                            text += ' ' + self.normalize_text(
+                                etree.tostring(child, method='text', encoding='unicode') or '')
+                        text = self.normalize_text(text + tail_text)
+                        if text:
+                            result.append(f'[TEXT:{text}]')
+
+                    for child in node:
+                        result.extend(traverse(child, depth + 1))
+                    result.append(f'</{tag}>')
+            return result
+
+        return traverse(root)
+
+    def parse_html_table(self, html_str: str):
+        """Parse HTML string and extract table element."""
+        from lxml import etree
+
+        try:
+            html_str = html_str.strip()
+            if not html_str.startswith('<'):
+                return None
+
+            # Try parsing as HTML fragment
+            try:
+                parser = etree.HTMLParser()
+                tree = etree.fromstring(f'<html><body>{html_str}</body></html>', parser)
+                tables = tree.xpath('//table')
+                if tables:
+                    return tables[0]
+            except Exception:
+                pass
+
+            # Try parsing as XML
+            try:
+                root = etree.fromstring(html_str.encode('utf-8'))
+                if root.tag.lower() == 'table':
+                    return root
+                tables = root.xpath('//table')
+                if tables:
+                    return tables[0]
+            except Exception:
+                pass
+
+            return None
+        except Exception:
+            return None
+
+    def compute_edit_distance(self, seq1: List[str], seq2: List[str]) -> int:
+        """Compute Levenshtein edit distance between two sequences."""
+        m, n = len(seq1), len(seq2)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+        for i in range(m + 1):
+            dp[i][0] = i
+        for j in range(n + 1):
+            dp[0][j] = j
+
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if seq1[i - 1] == seq2[j - 1]:
+                    dp[i][j] = dp[i - 1][j - 1]
+                else:
+                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+
+        return dp[m][n]
+
+    def compute_teds(self, pred_html: str, gt_html: str) -> float:
+        """Compute TEDS score between predicted and ground truth HTML tables."""
+        pred_tree = self.parse_html_table(pred_html)
+        gt_tree = self.parse_html_table(gt_html)
+
+        if pred_tree is None and gt_tree is None:
+            return 1.0
+        if pred_tree is None or gt_tree is None:
+            return 0.0
+
+        pred_list = self.tree_to_list(pred_tree, self.structure_only)
+        gt_list = self.tree_to_list(gt_tree, self.structure_only)
+
+        if not pred_list and not gt_list:
+            return 1.0
+        if not pred_list or not gt_list:
+            return 0.0
+
+        edit_dist = self.compute_edit_distance(pred_list, gt_list)
+        max_len = max(len(pred_list), len(gt_list))
+        teds = 1.0 - edit_dist / max_len
+
+        return max(0.0, teds)
+
+    def extract_html_from_completion(self, completion: str) -> str:
+        """Extract HTML table from model completion."""
+        # Try to find HTML table in various formats
+        import re
+
+        # Look for table within code blocks
+        code_block_match = re.search(r'```(?:html)?\s*(.*?)```', completion, re.DOTALL | re.IGNORECASE)
+        if code_block_match:
+            completion = code_block_match.group(1)
+
+        # Look for <answer> tags
+        answer_match = re.search(r'<answer>(.*?)</answer>', completion, re.DOTALL)
+        if answer_match:
+            completion = answer_match.group(1)
+
+        # Find table element
+        table_match = re.search(r'(<table.*?</table>)', completion, re.DOTALL | re.IGNORECASE)
+        if table_match:
+            return table_match.group(1)
+
+        return completion.strip()
+
+    def __call__(self, completions, html_table, **kwargs) -> List[float]:
+        """Compute TEDS rewards for completions.
+
+        Args:
+            completions: List of model completions (predicted HTML tables)
+            html_table: List of ground truth HTML tables from the dataset
+        """
+        rewards = []
+        for completion, gt in zip(completions, html_table):
+            pred_html = self.extract_html_from_completion(completion)
+            teds_score = self.compute_teds(pred_html, gt)
+            rewards.append(teds_score)
+        return rewards
+
+
+class TEDSStructure(TEDS):
+    """TEDS reward that only compares table structure without text content."""
+
+    def __init__(self):
+        super().__init__(structure_only=True)
+
+
+class GriTS(ORM):
+    """Grid Table Similarity (GriTS) reward for table structure recognition.
+
+    GriTS measures table similarity by comparing cell contents at grid positions,
+    accounting for cell spanning (colspan/rowspan).
+
+    Reference: https://arxiv.org/abs/2203.12555
+    """
+
+    def __init__(self, metric_type: str = 'con'):
+        """Initialize GriTS reward.
+
+        Args:
+            metric_type: Type of GriTS metric - 'con' (content), 'top' (topology),
+                        or 'loc' (location). Default is 'con'.
+        """
+        self.metric_type = metric_type
+        try:
+            from lxml import etree
+        except ImportError as e:
+            raise ImportError(
+                'The lxml package is required but not installed. '
+                "Please install it using 'pip install lxml'.") from e
+
+    def parse_html_to_grid(self, html_str: str) -> List[List[str]]:
+        """Parse HTML table to a 2D grid representation."""
+        from lxml import etree
+
+        try:
+            html_str = html_str.strip()
+            if not html_str.startswith('<'):
+                return []
+
+            # Parse HTML
+            try:
+                parser = etree.HTMLParser()
+                tree = etree.fromstring(f'<html><body>{html_str}</body></html>', parser)
+                tables = tree.xpath('//table')
+                if not tables:
+                    return []
+                table = tables[0]
+            except Exception:
+                try:
+                    table = etree.fromstring(html_str.encode('utf-8'))
+                    if table.tag.lower() != 'table':
+                        tables = table.xpath('//table')
+                        if not tables:
+                            return []
+                        table = tables[0]
+                except Exception:
+                    return []
+
+            # Extract rows
+            rows = table.xpath('.//tr')
+            if not rows:
+                return []
+
+            # Determine grid dimensions
+            num_rows = len(rows)
+            num_cols = 0
+            for row in rows:
+                cols = 0
+                for cell in row.xpath('.//td|.//th'):
+                    colspan = int(cell.get('colspan', 1))
+                    cols += colspan
+                num_cols = max(num_cols, cols)
+
+            if num_cols == 0:
+                return []
+
+            # Initialize grid
+            grid = [['' for _ in range(num_cols)] for _ in range(num_rows)]
+            occupied = [[False for _ in range(num_cols)] for _ in range(num_rows)]
+
+            # Fill grid
+            for row_idx, row in enumerate(rows):
+                col_idx = 0
+                for cell in row.xpath('.//td|.//th'):
+                    # Skip occupied cells
+                    while col_idx < num_cols and occupied[row_idx][col_idx]:
+                        col_idx += 1
+                    if col_idx >= num_cols:
+                        break
+
+                    colspan = int(cell.get('colspan', 1))
+                    rowspan = int(cell.get('rowspan', 1))
+
+                    # Get cell text
+                    text = etree.tostring(cell, method='text', encoding='unicode') or ''
+                    text = ' '.join(text.split())
+
+                    # Fill grid cells
+                    for r in range(rowspan):
+                        for c in range(colspan):
+                            if row_idx + r < num_rows and col_idx + c < num_cols:
+                                if self.metric_type == 'top':
+                                    grid[row_idx + r][col_idx + c] = f'cell_{row_idx}_{col_idx}'
+                                elif self.metric_type == 'loc':
+                                    grid[row_idx + r][col_idx + c] = f'{row_idx}_{col_idx}'
+                                else:
+                                    grid[row_idx + r][col_idx + c] = text
+                                occupied[row_idx + r][col_idx + c] = True
+
+                    col_idx += colspan
+
+            return grid
+        except Exception:
+            return []
+
+    def compute_cell_similarity(self, pred_cell: str, gt_cell: str) -> float:
+        """Compute similarity between two cells."""
+        if self.metric_type in ('top', 'loc'):
+            return 1.0 if pred_cell == gt_cell else 0.0
+        else:
+            # Content comparison using token overlap
+            pred_tokens = set(pred_cell.lower().split())
+            gt_tokens = set(gt_cell.lower().split())
+
+            if not pred_tokens and not gt_tokens:
+                return 1.0
+            if not pred_tokens or not gt_tokens:
+                return 0.0
+
+            intersection = len(pred_tokens & gt_tokens)
+            precision = intersection / len(pred_tokens) if pred_tokens else 0
+            recall = intersection / len(gt_tokens) if gt_tokens else 0
+
+            if precision + recall == 0:
+                return 0.0
+            return 2 * precision * recall / (precision + recall)
+
+    def compute_grits(self, pred_html: str, gt_html: str) -> float:
+        """Compute GriTS score between predicted and ground truth HTML tables."""
+        pred_grid = self.parse_html_to_grid(pred_html)
+        gt_grid = self.parse_html_to_grid(gt_html)
+
+        if not pred_grid and not gt_grid:
+            return 1.0
+        if not pred_grid or not gt_grid:
+            return 0.0
+
+        # Align grids to same dimensions
+        pred_rows, pred_cols = len(pred_grid), len(pred_grid[0]) if pred_grid else 0
+        gt_rows, gt_cols = len(gt_grid), len(gt_grid[0]) if gt_grid else 0
+
+        max_rows = max(pred_rows, gt_rows)
+        max_cols = max(pred_cols, gt_cols)
+
+        # Pad grids
+        for grid, rows, cols in [(pred_grid, pred_rows, pred_cols), (gt_grid, gt_rows, gt_cols)]:
+            for row in grid:
+                row.extend([''] * (max_cols - len(row)))
+            for _ in range(max_rows - len(grid)):
+                grid.append([''] * max_cols)
+
+        # Compute cell-wise similarity
+        total_sim = 0.0
+        total_cells = max_rows * max_cols
+
+        for i in range(max_rows):
+            for j in range(max_cols):
+                pred_cell = pred_grid[i][j] if i < len(pred_grid) and j < len(pred_grid[i]) else ''
+                gt_cell = gt_grid[i][j] if i < len(gt_grid) and j < len(gt_grid[i]) else ''
+                total_sim += self.compute_cell_similarity(pred_cell, gt_cell)
+
+        return total_sim / total_cells if total_cells > 0 else 0.0
+
+    def extract_html_from_completion(self, completion: str) -> str:
+        """Extract HTML table from model completion."""
+        import re
+
+        code_block_match = re.search(r'```(?:html)?\s*(.*?)```', completion, re.DOTALL | re.IGNORECASE)
+        if code_block_match:
+            completion = code_block_match.group(1)
+
+        answer_match = re.search(r'<answer>(.*?)</answer>', completion, re.DOTALL)
+        if answer_match:
+            completion = answer_match.group(1)
+
+        table_match = re.search(r'(<table.*?</table>)', completion, re.DOTALL | re.IGNORECASE)
+        if table_match:
+            return table_match.group(1)
+
+        return completion.strip()
+
+    def __call__(self, completions, html_table, **kwargs) -> List[float]:
+        """Compute GriTS rewards for completions.
+
+        Args:
+            completions: List of model completions (predicted HTML tables)
+            html_table: List of ground truth HTML tables from the dataset
+        """
+        rewards = []
+        for completion, gt in zip(completions, html_table):
+            pred_html = self.extract_html_from_completion(completion)
+            grits_score = self.compute_grits(pred_html, gt)
+            rewards.append(grits_score)
+        return rewards
+
+
+class GriTSTop(GriTS):
+    """GriTS topology metric - compares table structure only."""
+
+    def __init__(self):
+        super().__init__(metric_type='top')
+
+
+class GriTSLoc(GriTS):
+    """GriTS location metric - compares cell locations."""
+
+    def __init__(self):
+        super().__init__(metric_type='loc')
+
+
+class TableFormat(ORM):
+    """Reward function that checks if the completion contains valid HTML table format."""
+
+    def __call__(self, completions, **kwargs) -> List[float]:
+        """Check if completions contain valid HTML table structure."""
+        import re
+        rewards = []
+        for completion in completions:
+            # Check for basic HTML table structure
+            has_table = bool(re.search(r'<table.*?>.*?</table>', completion, re.DOTALL | re.IGNORECASE))
+            has_rows = bool(re.search(r'<tr.*?>.*?</tr>', completion, re.DOTALL | re.IGNORECASE))
+            has_cells = bool(re.search(r'<t[dh].*?>.*?</t[dh]>', completion, re.DOTALL | re.IGNORECASE))
+
+            if has_table and has_rows and has_cells:
+                rewards.append(1.0)
+            elif has_table and has_rows:
+                rewards.append(0.5)
+            elif has_table:
+                rewards.append(0.25)
+            else:
+                rewards.append(0.0)
+        return rewards
+
+
 orms = {
     'toolbench': ReactORM,
     'math': MathORM,
@@ -453,4 +888,10 @@ orms = {
     'cosine': CosineReward,
     'repetition': RepetitionPenalty,
     'soft_overlong': SoftOverlong,
+    'teds': TEDS,
+    'teds_structure': TEDSStructure,
+    'grits': GriTS,
+    'grits_top': GriTSTop,
+    'grits_loc': GriTSLoc,
+    'table_format': TableFormat,
 }
