@@ -55,7 +55,7 @@ def train() -> None:
 
     CUDA_VISIBLE_DEVICES=0,1 \
     swift rollout \
-        --model /checkpoints/Qwen/Qwen3-VL-2B-Thinking \
+        --model /checkpoints/Qwen/Qwen3-VL-2B-Instruct \
         --vllm_tensor_parallel_size 2 \
         --vllm_max_model_len 16384 &
 
@@ -72,9 +72,10 @@ def train() -> None:
     swift rlhf \
         --rlhf_type grpo \
         --use_hf true \
-        --model /checkpoints/Qwen/Qwen3-VL-2B-Thinking \
-        --dataset /data/train_table_grpo.jsonl \
+        --model /checkpoints/Qwen/Qwen3-VL-2B-Instruct \
+        --dataset /data/train_table_grpo_sorted.jsonl \
         --load_from_cache_file true \
+        --dataset_shuffle false \
         --use_vllm true \
         --vllm_mode server \
         --vllm_server_host 127.0.0.1 \
@@ -87,14 +88,16 @@ def train() -> None:
         --learning_rate 1e-5 \
         --save_total_limit 3 \
         --logging_steps 1 \
+        --save_steps 100 \
         --output_dir /checkpoints/grpo_table_qwen3vl_2b_0120_length_control \
-        --gradient_accumulation_steps 4 \
+        --gradient_accumulation_steps 2 \
         --warmup_ratio 0.05 \
         --dataloader_num_workers 8 \
         --max_completion_length 12288 \
         --vllm_max_model_len 16384 \
-        --reward_funcs teds grits table_format thinking_length_penalty table_length_penalty \
-        --reward_weights 0.3 0.3 0.1 0.15 0.15 \
+        --reward_funcs teds grits table_format thinking_length_penalty table_length_penalty format \
+        --reward_weights 0.3 0.3 0.1 0.1 0.1 0.2 \
+        --system "Output the thinking process in <think> </think> and final answer (number) in <answer> </answer> tags." \
         --scale_rewards gdpo \
         --num_generations 8 \
         --temperature 0.7 \

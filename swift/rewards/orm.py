@@ -917,7 +917,7 @@ class TableFormat(ORM):
 class ThinkingLengthPenalty(ORM):
     """Penalty if thinking content is longer than the actual table output.
 
-    Applies a -0.2 penalty when the <think>...</think> content is longer
+    Applies a -0.5 penalty when the <think>...</think> content is longer
     than the actual output (content after thinking).
     """
 
@@ -937,7 +937,7 @@ class ThinkingLengthPenalty(ORM):
 
             # Apply penalty if thinking is longer than output
             if think_len > output_len and output_len > 0:
-                rewards.append(-0.2)
+                rewards.append(-0.5)
             else:
                 rewards.append(0.0)
         return rewards
@@ -985,7 +985,7 @@ class TableLengthPenalty(ORM):
             # Apply penalty: -0.1 for every 10% beyond 10% threshold
             if extra_percentage > 10:
                 penalty = -0.1 * (extra_percentage - 10) / 10
-                rewards.append(penalty)
+                rewards.append(max(penalty, -0.5))
             else:
                 rewards.append(0.0)
         return rewards
