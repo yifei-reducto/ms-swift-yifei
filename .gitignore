@@ -146,6 +146,8 @@ megatron_output/
 /*-hf/
 /*_cached_dataset/
 /sample_output/
+examples/table_grpo/*.json
+examples/train/swift_vl*
 
 # Table GRPO dataset (images and jsonl)
 /examples/table_grpo/images/

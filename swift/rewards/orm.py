@@ -1066,6 +1066,172 @@ class EditDistance(ORM):
         return rewards
 
 
+class WordEditDistance(ORM):
+    """Word-level edit distance (Levenshtein) based reward for OCR and text generation.
+
+    Computes normalized edit distance at word level between prediction and ground truth.
+    More robust than character-level edit distance for tasks where word accuracy matters
+    more than exact character matching.
+    """
+
+    @staticmethod
+    def extract_ocr(text: str) -> str:
+        """Extract OCR content from <ocr>...</ocr> tags."""
+        if text is None:
+            return ''
+        match = re.search(r'<ocr>(.*?)</ocr>', text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return text
+
+    @staticmethod
+    def tokenize(text: str) -> List[str]:
+        """Tokenize text into words."""
+        if text is None:
+            return []
+        # Split on whitespace and filter empty strings
+        return [w for w in text.split() if w]
+
+    @staticmethod
+    def compute_edit_distance(seq1: List[str], seq2: List[str]) -> int:
+        """Compute Levenshtein edit distance between two word sequences."""
+        m, n = len(seq1), len(seq2)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+        for i in range(m + 1):
+            dp[i][0] = i
+        for j in range(n + 1):
+            dp[0][j] = j
+
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if seq1[i - 1] == seq2[j - 1]:
+                    dp[i][j] = dp[i - 1][j - 1]
+                else:
+                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+
+        return dp[m][n]
+
+    def __call__(self, completions, solution, **kwargs) -> List[float]:
+        """Compute word-level edit distance rewards.
+
+        Args:
+            completions: List of model completions (OCR predictions)
+            solution: List of ground truth texts
+
+        Returns:
+            List of similarity scores in [0, 1] where 1 is perfect match
+        """
+        rewards = []
+        for completion, gt in zip(completions, solution):
+            # Extract OCR content from tags and tokenize into words
+            pred_words = self.tokenize(self.extract_ocr(completion))
+            gt_words = self.tokenize(gt)
+
+            # Compute word-level edit distance
+            edit_dist = self.compute_edit_distance(pred_words, gt_words)
+
+            # Convert to similarity score: 1 - (edit_dist / max_len)
+            max_len = max(len(pred_words), len(gt_words))
+            if max_len == 0:
+                similarity = 1.0  # Both empty = perfect match
+            else:
+                similarity = 1.0 - (edit_dist / max_len)
+
+            rewards.append(max(0.0, similarity))
+        return rewards
+
+
+class CheckboxTagAccuracy(ORM):
+    """Precision-based reward for <checked> and <unchecked> tag accuracy.
+
+    Evaluates the accuracy of checkbox tags by comparing the sequence of tags
+    in the prediction against the ground truth, considering both count and order.
+
+    Uses sequence edit distance to measure similarity, which naturally handles:
+    - Missing tags (deletions)
+    - Extra tags (insertions)
+    - Wrong tag type (substitutions)
+    - Order mismatches
+    """
+
+    TAG_PATTERN = re.compile(r'<(checked|unchecked)>')
+
+    @staticmethod
+    def extract_ocr(text: str) -> str:
+        """Extract OCR content from <ocr>...</ocr> tags."""
+        if text is None:
+            return ''
+        match = re.search(r'<ocr>(.*?)</ocr>', text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return text
+
+    def extract_checkbox_tags(self, text: str) -> List[str]:
+        """Extract sequence of checkbox tags in order of appearance.
+
+        Args:
+            text: Input text containing checkbox tags
+
+        Returns:
+            List of tag names ('checked' or 'unchecked') in order
+        """
+        if not text:
+            return []
+        return self.TAG_PATTERN.findall(text)
+
+    @staticmethod
+    def compute_edit_distance(seq1: List[str], seq2: List[str]) -> int:
+        """Compute Levenshtein edit distance between two sequences."""
+        m, n = len(seq1), len(seq2)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+        for i in range(m + 1):
+            dp[i][0] = i
+        for j in range(n + 1):
+            dp[0][j] = j
+
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if seq1[i - 1] == seq2[j - 1]:
+                    dp[i][j] = dp[i - 1][j - 1]
+                else:
+                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+
+        return dp[m][n]
+
+    def __call__(self, completions, solution, **kwargs) -> List[float]:
+        """Compute checkbox tag accuracy rewards.
+
+        Args:
+            completions: List of model completions
+            solution: List of ground truth texts
+
+        Returns:
+            List of similarity scores in [0, 1] where 1 is perfect match
+        """
+        rewards = []
+        for completion, gt in zip(completions, solution):
+            # Extract OCR content and get checkbox tag sequences
+            pred_tags = self.extract_checkbox_tags(self.extract_ocr(completion))
+            gt_tags = self.extract_checkbox_tags(gt)
+
+            # If no tags in ground truth, reward based on whether prediction also has none
+            if len(gt_tags) == 0:
+                rewards.append(1.0 if len(pred_tags) == 0 else 0.0)
+                continue
+
+            # Compute sequence edit distance
+            edit_dist = self.compute_edit_distance(pred_tags, gt_tags)
+
+            # Convert to similarity: 1 - (edit_dist / max_len)
+            max_len = max(len(pred_tags), len(gt_tags))
+            similarity = 1.0 - (edit_dist / max_len)
+
+            rewards.append(max(0.0, similarity))
+        return rewards
+
+
 orms = {
     'toolbench': ReactORM,
     'math': MathORM,
@@ -1084,4 +1250,6 @@ orms = {
     'thinking_length_penalty': ThinkingLengthPenalty,
     'table_length_penalty': TableLengthPenalty,
     'edit_distance': EditDistance,
+    'word_edit_distance': WordEditDistance,
+    'checkbox_tag_accuracy': CheckboxTagAccuracy,
 }
