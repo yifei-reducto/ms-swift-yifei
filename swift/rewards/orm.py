@@ -991,6 +991,71 @@ class TableLengthPenalty(ORM):
         return rewards
 
 
+class EditDistance(ORM):
+    """Edit distance (Levenshtein) based reward for OCR and text generation.
+
+    Computes normalized edit distance between prediction and ground truth,
+    with whitespace normalization for robustness.
+    """
+
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """Normalize whitespace and newlines."""
+        if text is None:
+            return ''
+        # Replace all whitespace sequences (including newlines, tabs) with single space
+        return ' '.join(text.split())
+
+    @staticmethod
+    def compute_edit_distance(s1: str, s2: str) -> int:
+        """Compute Levenshtein edit distance between two strings."""
+        m, n = len(s1), len(s2)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+        for i in range(m + 1):
+            dp[i][0] = i
+        for j in range(n + 1):
+            dp[0][j] = j
+
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if s1[i - 1] == s2[j - 1]:
+                    dp[i][j] = dp[i - 1][j - 1]
+                else:
+                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+
+        return dp[m][n]
+
+    def __call__(self, completions, solution, **kwargs) -> List[float]:
+        """Compute edit distance rewards.
+
+        Args:
+            completions: List of model completions (OCR predictions)
+            solution: List of ground truth texts
+
+        Returns:
+            List of similarity scores in [0, 1] where 1 is perfect match
+        """
+        rewards = []
+        for completion, gt in zip(completions, solution):
+            # Normalize whitespace and newlines
+            pred_text = self.normalize_text(completion)
+            gt_text = self.normalize_text(gt)
+
+            # Compute edit distance
+            edit_dist = self.compute_edit_distance(pred_text, gt_text)
+
+            # Convert to similarity score: 1 - (edit_dist / max_len)
+            max_len = max(len(pred_text), len(gt_text))
+            if max_len == 0:
+                similarity = 1.0  # Both empty = perfect match
+            else:
+                similarity = 1.0 - (edit_dist / max_len)
+
+            rewards.append(max(0.0, similarity))
+        return rewards
+
+
 orms = {
     'toolbench': ReactORM,
     'math': MathORM,
@@ -1008,4 +1073,5 @@ orms = {
     'table_format': TableFormat,
     'thinking_length_penalty': ThinkingLengthPenalty,
     'table_length_penalty': TableLengthPenalty,
+    'edit_distance': EditDistance,
 }
