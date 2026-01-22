@@ -1232,6 +1232,60 @@ class CheckboxTagAccuracy(ORM):
         return rewards
 
 
+class OCRLengthPenalty(ORM):
+    """Penalty for OCR output being longer than ground truth.
+
+    - No penalty if output is ≤10% longer than ground truth
+    - -0.1 penalty for every 10% beyond the 10% threshold
+    - Penalty capped at -1.0
+
+    Example: 35% longer → -0.1 * (35-10)/10 = -0.25
+    """
+
+    @staticmethod
+    def extract_ocr(text: str) -> str:
+        """Extract OCR content from <ocr>...</ocr> tags."""
+        if text is None:
+            return ''
+        match = re.search(r'<ocr>(.*?)</ocr>', text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return text
+
+    def __call__(self, completions, solution, **kwargs) -> List[float]:
+        """Compute length penalty for OCR outputs.
+
+        Args:
+            completions: List of model completions (OCR predictions)
+            solution: List of ground truth texts
+
+        Returns:
+            List of penalty scores in [-1.0, 0.0]
+        """
+        rewards = []
+        for completion, gt in zip(completions, solution):
+            pred_text = self.extract_ocr(completion)
+            gt_text = gt
+
+            pred_len = len(pred_text)
+            gt_len = len(gt_text)
+
+            if gt_len == 0:
+                rewards.append(0.0)
+                continue
+
+            # Calculate percentage longer
+            extra_percentage = ((pred_len - gt_len) / gt_len) * 100
+
+            # Apply penalty: -0.1 for every 10% beyond 10% threshold
+            if extra_percentage > 10:
+                penalty = -0.1 * (extra_percentage - 10) / 10
+                rewards.append(max(penalty, -1.0))
+            else:
+                rewards.append(0.0)
+        return rewards
+
+
 orms = {
     'toolbench': ReactORM,
     'math': MathORM,
@@ -1252,4 +1306,5 @@ orms = {
     'edit_distance': EditDistance,
     'word_edit_distance': WordEditDistance,
     'checkbox_tag_accuracy': CheckboxTagAccuracy,
+    'ocr_length_penalty': OCRLengthPenalty,
 }
