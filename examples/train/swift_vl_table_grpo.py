@@ -29,7 +29,7 @@ image = (
     )
 )
 
-app = modal.App("table_grpo_length_control")
+app = modal.App("table_grpo_length_control_async_instruct")
 
 DATA = modal.Volume.from_name("v2_data_yifei", create_if_missing=True)
 CKPT = modal.Volume.from_name("v2_checkpoints", create_if_missing=False)
@@ -57,7 +57,7 @@ def train() -> None:
     swift rollout \
         --model /checkpoints/Qwen/Qwen3-VL-2B-Instruct \
         --vllm_tensor_parallel_size 2 \
-        --vllm_max_model_len 16384 &
+        --vllm_max_model_len 32768 &
 
     sleep 180
 
@@ -73,9 +73,9 @@ def train() -> None:
         --rlhf_type grpo \
         --use_hf true \
         --model /checkpoints/Qwen/Qwen3-VL-2B-Instruct \
-        --dataset /data/train_table_grpo_sorted.jsonl \
+        --dataset /data/train_table_grpo.jsonl \
         --load_from_cache_file true \
-        --dataset_shuffle false \
+        --dataset_shuffle true \
         --use_vllm true \
         --vllm_mode server \
         --vllm_server_host 127.0.0.1 \
@@ -85,23 +85,28 @@ def train() -> None:
         --num_train_epochs 3 \
         --per_device_train_batch_size 2 \
         --per_device_eval_batch_size 2 \
-        --learning_rate 1e-5 \
+        --learning_rate 5e-7 \
+        --beta 0.001 \
         --save_total_limit 3 \
         --logging_steps 1 \
         --save_steps 100 \
-        --output_dir /checkpoints/grpo_table_qwen3vl_2b_0120_length_control \
+        --output_dir /checkpoints/grpo_table_qwen3vl_2b_instruct_0121_no_thinking_async \
         --gradient_accumulation_steps 2 \
         --warmup_ratio 0.05 \
         --dataloader_num_workers 8 \
-        --max_completion_length 12288 \
-        --vllm_max_model_len 16384 \
-        --reward_funcs teds grits table_format thinking_length_penalty table_length_penalty format \
-        --reward_weights 0.3 0.3 0.1 0.1 0.1 0.2 \
-        --system "Output the thinking process in <think> </think> and final answer (number) in <answer> </answer> tags." \
+        --max_completion_length 24576 \
+        --vllm_max_model_len 32768 \
+        --reward_funcs teds grits table_format repetition \
+        --reward_weights 0.3 0.4 0.2 0.3 \
+        --enable_thinking true \
         --scale_rewards gdpo \
+        --importance_sampling_level sequence \
+        --max_resample_times 3 \
+        --dynamic_sample true \
+        --async_generate true \
         --num_generations 8 \
-        --temperature 0.7 \
-        --top_p 0.9 \
+        --temperature 1.0 \
+        --top_p 0.95 \
         --deepspeed zero3 \
         --log_completions true \
         --report_to wandb
