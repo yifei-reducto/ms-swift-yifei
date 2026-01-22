@@ -999,6 +999,16 @@ class EditDistance(ORM):
     """
 
     @staticmethod
+    def extract_ocr(text: str) -> str:
+        """Extract OCR content from <ocr>...</ocr> tags."""
+        if text is None:
+            return ''
+        match = re.search(r'<ocr>(.*?)</ocr>', text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return text
+
+    @staticmethod
     def normalize_text(text: str) -> str:
         """Normalize whitespace and newlines."""
         if text is None:
@@ -1038,8 +1048,8 @@ class EditDistance(ORM):
         """
         rewards = []
         for completion, gt in zip(completions, solution):
-            # Normalize whitespace and newlines
-            pred_text = self.normalize_text(completion)
+            # Extract OCR content from tags and normalize whitespace
+            pred_text = self.normalize_text(self.extract_ocr(completion))
             gt_text = self.normalize_text(gt)
 
             # Compute edit distance
