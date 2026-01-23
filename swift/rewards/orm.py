@@ -3,11 +3,65 @@
 
 import os
 import re
-from typing import Dict, List, Union
+from typing import Dict, List, Sequence, Union
 
 import json
 
 from swift.infer_engine import InferRequest
+
+# Try to import rapidfuzz for optimized edit distance (10-100x faster)
+try:
+    from rapidfuzz.distance import Levenshtein as _rf_levenshtein
+    _HAS_RAPIDFUZZ = True
+except ImportError:
+    _HAS_RAPIDFUZZ = False
+
+
+def _fast_edit_distance(s1: Sequence, s2: Sequence) -> int:
+    """Compute Levenshtein edit distance with optimized implementation.
+
+    Uses rapidfuzz if available (C-optimized), otherwise falls back to
+    O(min(m,n)) space Python implementation.
+    """
+    if _HAS_RAPIDFUZZ:
+        return _rf_levenshtein.distance(s1, s2)
+
+    # Optimized pure Python: O(min(m,n)) space instead of O(m*n)
+    if len(s1) < len(s2):
+        s1, s2 = s2, s1
+    m, n = len(s1), len(s2)
+
+    if n == 0:
+        return m
+
+    # Use two rows instead of full matrix
+    prev_row = list(range(n + 1))
+    curr_row = [0] * (n + 1)
+
+    for i in range(1, m + 1):
+        curr_row[0] = i
+        for j in range(1, n + 1):
+            if s1[i - 1] == s2[j - 1]:
+                curr_row[j] = prev_row[j - 1]
+            else:
+                curr_row[j] = 1 + min(prev_row[j], curr_row[j - 1], prev_row[j - 1])
+        prev_row, curr_row = curr_row, prev_row
+
+    return prev_row[n]
+
+
+def _fast_normalized_similarity(s1: Sequence, s2: Sequence) -> float:
+    """Compute normalized similarity (1 - edit_distance/max_len).
+
+    Uses rapidfuzz if available for maximum performance.
+    """
+    if _HAS_RAPIDFUZZ:
+        return _rf_levenshtein.normalized_similarity(s1, s2)
+
+    max_len = max(len(s1), len(s2))
+    if max_len == 0:
+        return 1.0
+    return 1.0 - (_fast_edit_distance(s1, s2) / max_len)
 
 
 class ORM:
@@ -554,25 +608,6 @@ class TEDS(ORM):
         except Exception:
             return None
 
-    def compute_edit_distance(self, seq1: List[str], seq2: List[str]) -> int:
-        """Compute Levenshtein edit distance between two sequences."""
-        m, n = len(seq1), len(seq2)
-        dp = [[0] * (n + 1) for _ in range(m + 1)]
-
-        for i in range(m + 1):
-            dp[i][0] = i
-        for j in range(n + 1):
-            dp[0][j] = j
-
-        for i in range(1, m + 1):
-            for j in range(1, n + 1):
-                if seq1[i - 1] == seq2[j - 1]:
-                    dp[i][j] = dp[i - 1][j - 1]
-                else:
-                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
-
-        return dp[m][n]
-
     def compute_teds(self, pred_html: str, gt_html: str) -> float:
         """Compute TEDS score between predicted and ground truth HTML tables."""
         pred_tree = self.parse_html_table(pred_html)
@@ -591,10 +626,7 @@ class TEDS(ORM):
         if not pred_list or not gt_list:
             return 0.0
 
-        edit_dist = self.compute_edit_distance(pred_list, gt_list)
-        max_len = max(len(pred_list), len(gt_list))
-        teds = 1.0 - edit_dist / max_len
-
+        teds = _fast_normalized_similarity(pred_list, gt_list)
         return max(0.0, teds)
 
     def extract_html_from_completion(self, completion: str) -> str:
@@ -1016,26 +1048,6 @@ class EditDistance(ORM):
         # Replace all whitespace sequences (including newlines, tabs) with single space
         return ' '.join(text.split())
 
-    @staticmethod
-    def compute_edit_distance(s1: str, s2: str) -> int:
-        """Compute Levenshtein edit distance between two strings."""
-        m, n = len(s1), len(s2)
-        dp = [[0] * (n + 1) for _ in range(m + 1)]
-
-        for i in range(m + 1):
-            dp[i][0] = i
-        for j in range(n + 1):
-            dp[0][j] = j
-
-        for i in range(1, m + 1):
-            for j in range(1, n + 1):
-                if s1[i - 1] == s2[j - 1]:
-                    dp[i][j] = dp[i - 1][j - 1]
-                else:
-                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
-
-        return dp[m][n]
-
     def __call__(self, completions, solution, **kwargs) -> List[float]:
         """Compute edit distance rewards.
 
@@ -1057,16 +1069,8 @@ class EditDistance(ORM):
             pred_text = self.normalize_text(self.extract_ocr(completion))
             gt_text = self.normalize_text(gt)
 
-            # Compute edit distance
-            edit_dist = self.compute_edit_distance(pred_text, gt_text)
-
-            # Convert to similarity score: 1 - (edit_dist / max_len)
-            max_len = max(len(pred_text), len(gt_text))
-            if max_len == 0:
-                similarity = 1.0  # Both empty = perfect match
-            else:
-                similarity = 1.0 - (edit_dist / max_len)
-
+            # Compute normalized similarity using optimized implementation
+            similarity = _fast_normalized_similarity(pred_text, gt_text)
             rewards.append(max(0.0, similarity))
         return rewards
 
@@ -1097,26 +1101,6 @@ class WordEditDistance(ORM):
         # Split on whitespace and filter empty strings
         return [w for w in text.split() if w]
 
-    @staticmethod
-    def compute_edit_distance(seq1: List[str], seq2: List[str]) -> int:
-        """Compute Levenshtein edit distance between two word sequences."""
-        m, n = len(seq1), len(seq2)
-        dp = [[0] * (n + 1) for _ in range(m + 1)]
-
-        for i in range(m + 1):
-            dp[i][0] = i
-        for j in range(n + 1):
-            dp[0][j] = j
-
-        for i in range(1, m + 1):
-            for j in range(1, n + 1):
-                if seq1[i - 1] == seq2[j - 1]:
-                    dp[i][j] = dp[i - 1][j - 1]
-                else:
-                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
-
-        return dp[m][n]
-
     def __call__(self, completions, solution, **kwargs) -> List[float]:
         """Compute word-level edit distance rewards.
 
@@ -1133,16 +1117,8 @@ class WordEditDistance(ORM):
             pred_words = self.tokenize(self.extract_ocr(completion))
             gt_words = self.tokenize(gt)
 
-            # Compute word-level edit distance
-            edit_dist = self.compute_edit_distance(pred_words, gt_words)
-
-            # Convert to similarity score: 1 - (edit_dist / max_len)
-            max_len = max(len(pred_words), len(gt_words))
-            if max_len == 0:
-                similarity = 1.0  # Both empty = perfect match
-            else:
-                similarity = 1.0 - (edit_dist / max_len)
-
+            # Compute normalized similarity using optimized implementation
+            similarity = _fast_normalized_similarity(pred_words, gt_words)
             rewards.append(max(0.0, similarity))
         return rewards
 
@@ -1185,26 +1161,6 @@ class CheckboxTagAccuracy(ORM):
             return []
         return self.TAG_PATTERN.findall(text)
 
-    @staticmethod
-    def compute_edit_distance(seq1: List[str], seq2: List[str]) -> int:
-        """Compute Levenshtein edit distance between two sequences."""
-        m, n = len(seq1), len(seq2)
-        dp = [[0] * (n + 1) for _ in range(m + 1)]
-
-        for i in range(m + 1):
-            dp[i][0] = i
-        for j in range(n + 1):
-            dp[0][j] = j
-
-        for i in range(1, m + 1):
-            for j in range(1, n + 1):
-                if seq1[i - 1] == seq2[j - 1]:
-                    dp[i][j] = dp[i - 1][j - 1]
-                else:
-                    dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
-
-        return dp[m][n]
-
     def __call__(self, completions, solution, **kwargs) -> List[float]:
         """Compute checkbox tag accuracy rewards.
 
@@ -1231,13 +1187,8 @@ class CheckboxTagAccuracy(ORM):
                 rewards.append(1.0 if len(pred_tags) == 0 else 0.0)
                 continue
 
-            # Compute sequence edit distance
-            edit_dist = self.compute_edit_distance(pred_tags, gt_tags)
-
-            # Convert to similarity: 1 - (edit_dist / max_len)
-            max_len = max(len(pred_tags), len(gt_tags))
-            similarity = 1.0 - (edit_dist / max_len)
-
+            # Compute normalized similarity using optimized implementation
+            similarity = _fast_normalized_similarity(pred_tags, gt_tags)
             rewards.append(max(0.0, similarity))
         return rewards
 
