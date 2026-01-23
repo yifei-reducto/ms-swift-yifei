@@ -1047,7 +1047,12 @@ class EditDistance(ORM):
             List of similarity scores in [0, 1] where 1 is perfect match
         """
         rewards = []
-        for completion, gt in zip(completions, solution):
+        response_token_ids = kwargs.get('response_token_ids', [])
+        for idx, (completion, gt) in enumerate(zip(completions, solution)):
+            # Check output length - if >= 2400 tokens, return 0 reward
+            if response_token_ids and idx < len(response_token_ids) and len(response_token_ids[idx]) >= 2400:
+                rewards.append(0.0)
+                continue
             # Extract OCR content from tags and normalize whitespace
             pred_text = self.normalize_text(self.extract_ocr(completion))
             gt_text = self.normalize_text(gt)
@@ -1211,7 +1216,12 @@ class CheckboxTagAccuracy(ORM):
             List of similarity scores in [0, 1] where 1 is perfect match
         """
         rewards = []
-        for completion, gt in zip(completions, solution):
+        response_token_ids = kwargs.get('response_token_ids', [])
+        for idx, (completion, gt) in enumerate(zip(completions, solution)):
+            # Check output length - if >= 2400 tokens, return 0 reward
+            if response_token_ids and idx < len(response_token_ids) and len(response_token_ids[idx]) >= 2400:
+                rewards.append(0.0)
+                continue
             # Extract OCR content and get checkbox tag sequences
             pred_tags = self.extract_checkbox_tags(self.extract_ocr(completion))
             gt_tags = self.extract_checkbox_tags(gt)
