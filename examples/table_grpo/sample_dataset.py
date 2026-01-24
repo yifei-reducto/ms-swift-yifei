@@ -8,7 +8,7 @@ Sampling strategy:
    - Sample 10% from remaining datapoints
 3. Longest 50%:
    - Keep ALL datapoints containing <checked> or <unchecked>
-   - Sample 20% from remaining datapoints
+   - Keep the longest 20% from remaining datapoints
 """
 
 import json
@@ -56,11 +56,14 @@ def sample_dataset(input_path: str, output_path: str, seed: int = 42) -> None:
     # Process long half
     long_checkbox = [item for item in long_half if has_checkbox(item)]
     long_non_checkbox = [item for item in long_half if not has_checkbox(item)]
-    long_sampled = random.sample(long_non_checkbox, int(len(long_non_checkbox) * 0.2))
+    # Sort by length and keep the longest 40%
+    long_non_checkbox_sorted = sorted(long_non_checkbox, key=lambda x: len(x.get('solution', '')))
+    keep_count = int(len(long_non_checkbox_sorted) * 0.2)
+    long_sampled = long_non_checkbox_sorted[-keep_count:] if keep_count > 0 else []
 
     print(f"\nLong half breakdown:")
     print(f"  With checkbox: {len(long_checkbox)} (keeping all)")
-    print(f"  Without checkbox: {len(long_non_checkbox)} (sampling 20% = {len(long_sampled)})")
+    print(f"  Without checkbox: {len(long_non_checkbox)} (keeping longest 20% = {len(long_sampled)})")
 
     # Combine all kept items
     final_data = short_checkbox + short_sampled + long_checkbox + long_sampled
@@ -89,10 +92,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
-    parser.add_argument('--input', '-i', type=str, default='dataset_42706_grpo.json',
-                        help='Input dataset file (default: dataset_42706_grpo.json)')
-    parser.add_argument('--output', '-o', type=str, default='dataset_42706_sampled.json',
-                        help='Output dataset file (default: dataset_42706_sampled.json)')
+    parser.add_argument('--input', '-i', type=str, default='val_dataset_grpo.json',
+                        help='Input dataset file (default: val_dataset_grpo.json)')
+    parser.add_argument('--output', '-o', type=str, default='val_dataset_sampled.json',
+                        help='Output dataset file (default: val_dataset_sampled.json)')
     parser.add_argument('--seed', '-s', type=int, default=42,
                         help='Random seed for reproducibility (default: 42)')
     args = parser.parse_args()
