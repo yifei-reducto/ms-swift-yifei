@@ -150,6 +150,7 @@ examples/table_grpo/*.json
 examples/reading_order/*.json
 examples/reading_order/swift_vl*
 examples/train/swift_vl*
+examples/train/gkd_distillation.py
 
 # Table GRPO dataset (images and jsonl)
 /examples/table_grpo/images/
