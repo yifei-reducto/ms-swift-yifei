@@ -1061,8 +1061,8 @@ class EditDistance(ORM):
         rewards = []
         response_token_ids = kwargs.get('response_token_ids', [])
         for idx, (completion, gt) in enumerate(zip(completions, solution)):
-            # Check output length - if >= 2400 tokens, return 0 reward
-            if response_token_ids and idx < len(response_token_ids) and len(response_token_ids[idx]) >= 2400:
+            # Check output length - if >= 3000 tokens, return 0 reward
+            if response_token_ids and idx < len(response_token_ids) and len(response_token_ids[idx]) >= 3000:
                 rewards.append(0.0)
                 continue
             # Extract OCR content from tags and normalize whitespace
@@ -1174,8 +1174,8 @@ class CheckboxTagAccuracy(ORM):
         rewards = []
         response_token_ids = kwargs.get('response_token_ids', [])
         for idx, (completion, gt) in enumerate(zip(completions, solution)):
-            # Check output length - if >= 2400 tokens, return 0 reward
-            if response_token_ids and idx < len(response_token_ids) and len(response_token_ids[idx]) >= 2400:
+            # Check output length - if >= 3000 tokens, return 0 reward
+            if response_token_ids and idx < len(response_token_ids) and len(response_token_ids[idx]) >= 3000:
                 rewards.append(0.0)
                 continue
             # Extract OCR content and get checkbox tag sequences
@@ -1247,6 +1247,67 @@ class OCRLengthPenalty(ORM):
         return rewards
 
 
+class KendallTau(ORM):
+    """Kendall Tau correlation reward for reading order evaluation.
+
+    Compares predicted reading order against ground truth using Kendall Tau.
+    Returns 0.0 if labels don't match exactly (missing or extra labels).
+    Normalizes tau from [-1, 1] to [0, 1] (1.0 = perfect, 0.0 = reverse order).
+
+    Expects direct output like "赵钱孙李..." (no thinking or answer tags).
+    """
+
+    def __call__(self, completions, solution, **kwargs) -> List[float]:
+        from scipy.stats import kendalltau
+        import math
+
+        rewards = []
+        for completion, gt in zip(completions, solution):
+            # Direct text extraction (no thinking/answer tags)
+            pred_text = completion.strip() if completion else ''
+            gt_text = gt.strip() if gt else ''
+
+            # Convert to label lists (each character is a label)
+            pred_labels = list(pred_text)
+            gt_labels = list(gt_text)
+
+            # Edge case: empty sequences
+            if not pred_labels or not gt_labels:
+                rewards.append(0.0)
+                continue
+
+            # Check if labels match exactly (same multiset)
+            if sorted(pred_labels) != sorted(gt_labels):
+                rewards.append(0.0)
+                continue
+
+            # Edge case: single element
+            if len(gt_labels) == 1:
+                rewards.append(1.0)
+                continue
+
+            # Build position mapping from ground truth
+            char_to_position = {char: pos for pos, char in enumerate(gt_labels)}
+
+            # Convert prediction to ranks
+            pred_ranks = [char_to_position[c] for c in pred_labels]
+            gt_ranks = list(range(len(gt_labels)))
+
+            # Compute Kendall Tau
+            tau, _ = kendalltau(pred_ranks, gt_ranks)
+
+            # Handle NaN
+            if math.isnan(tau):
+                rewards.append(0.0)
+                continue
+
+            # Normalize from [-1, 1] to [0, 1]
+            reward = (tau + 1.0) / 2.0
+            rewards.append(reward)
+
+        return rewards
+
+
 orms = {
     'toolbench': ReactORM,
     'math': MathORM,
@@ -1268,4 +1329,5 @@ orms = {
     'word_edit_distance': WordEditDistance,
     'checkbox_tag_accuracy': CheckboxTagAccuracy,
     'ocr_length_penalty': OCRLengthPenalty,
+    'kendall_tau': KendallTau,
 }
