@@ -147,6 +147,7 @@ megatron_output/
 /*_cached_dataset/
 /sample_output/
 examples/table_grpo/*.json
+examples/table_grpo/sft_with_reasoning.py
 examples/reading_order/*.json
 examples/reading_order/swift_vl*
 examples/train/swift_vl*

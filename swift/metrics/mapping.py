@@ -3,6 +3,7 @@ from .acc import AccMetrics
 from .embedding import InfonceMetrics, PairedMetrics
 from .nlg import NlgMetrics
 from .reranker import RerankerMetrics
+from .table import TableMetrics
 
 # Add your own metric calculation method here, use `--metric xxx` to train
 # The metric here will only be called during validation
@@ -15,4 +16,6 @@ eval_metrics_map = {
     'paired': PairedMetrics,
     # reranker
     'reranker': RerankerMetrics,
+    # table
+    'table': TableMetrics,
 }
