@@ -980,7 +980,7 @@ class ThinkingLengthPenalty(ORM):
                     # Calculate how much longer thinking is than output (as percentage)
                     extra_percentage = ((think_len - output_len) / output_len) * 100
                     # Apply -0.1 penalty for every 10% longer, capped at -0.5
-                    penalty = min(-0.1 * (extra_percentage / 10), -0.5)
+                    penalty = max(-0.1 * (extra_percentage / 10), -0.5)
                     rewards.append(penalty)
                 else:
                     rewards.append(0.0)
