@@ -29,6 +29,15 @@ import json
 import argparse
 from pathlib import Path
 
+string_in_start = "Return only a "
+string_out = "Return only a list of labels in reading order (e.g., \"孙赵钱...\"). Do not output anything else."
+
+def replace_string_in_content(content: str) -> str:
+    """Replace instruction in content by splitting on string_in_start and appending string_out."""
+    parts = content.split(string_in_start, 1)
+    if len(parts) > 1:
+        return parts[0] + string_out
+    return content
 
 def convert_dataset(input_path: str, output_path: str) -> None:
     """Convert dataset from SFT chat format to GRPO format."""
@@ -49,6 +58,11 @@ def convert_dataset(input_path: str, output_path: str) -> None:
             role = msg.get('role', '')
             if role == 'assistant':
                 assistant_content = msg.get('content', '')
+            elif role == 'user':
+                # Replace strings in user content
+                new_msg = msg.copy()
+                new_msg['content'] = replace_string_in_content(msg.get('content', ''))
+                non_assistant_messages.append(new_msg)
             else:
                 non_assistant_messages.append(msg)
 

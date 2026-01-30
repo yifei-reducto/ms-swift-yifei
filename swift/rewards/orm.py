@@ -973,15 +973,20 @@ class ThinkingLengthPenalty(ORM):
             # Extract output length (content after </think> or whole completion if no thinking)
             if '</think>' in completion.lower():
                 output = re.split(r'</think>', completion, flags=re.IGNORECASE)[-1]
-            else:
-                output = completion
-            output_len = len(output.strip())
+                output_len = len(output.strip()) + 500
 
-            # Apply penalty if thinking is longer than output
-            if think_len > output_len and output_len > 0:
-                rewards.append(-0.5)
+                # Apply penalty if thinking is longer than output
+                if think_len > output_len and output_len > 0:
+                    # Calculate how much longer thinking is than output (as percentage)
+                    extra_percentage = ((think_len - output_len) / output_len) * 100
+                    # Apply -0.1 penalty for every 10% longer, capped at -0.5
+                    penalty = min(-0.1 * (extra_percentage / 10), -0.5)
+                    rewards.append(penalty)
+                else:
+                    rewards.append(0.0)
             else:
-                rewards.append(0.0)
+                # No </think> tag found, apply penalty
+                rewards.append(-0.5)
         return rewards
 
 
