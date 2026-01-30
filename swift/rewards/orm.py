@@ -664,15 +664,20 @@ class TEDS(ORM):
 
         return completion.strip()
 
-    def __call__(self, completions, html_table, **kwargs) -> List[float]:
+    def __call__(self, completions, solution=None, html_table=None, **kwargs) -> List[float]:
         """Compute TEDS rewards for completions.
 
         Args:
             completions: List of model completions (predicted HTML tables)
-            html_table: List of ground truth HTML tables from the dataset
+            solution: List of ground truth HTML tables from the dataset (standard field name)
+            html_table: List of ground truth HTML tables (alternative field name, for backward compatibility)
         """
+        # Support both 'solution' (standard) and 'html_table' (legacy) field names
+        gt_tables = solution if solution is not None else html_table
+        if gt_tables is None:
+            raise ValueError("Either 'solution' or 'html_table' must be provided as ground truth")
         rewards = []
-        for completion, gt in zip(completions, html_table):
+        for completion, gt in zip(completions, gt_tables):
             pred_html = self.extract_html_from_completion(completion)
             teds_score = self.compute_teds(pred_html, gt)
             rewards.append(teds_score)
@@ -885,15 +890,20 @@ class GriTS(ORM):
 
         return completion.strip()
 
-    def __call__(self, completions, html_table, **kwargs) -> List[float]:
+    def __call__(self, completions, solution=None, html_table=None, **kwargs) -> List[float]:
         """Compute GriTS rewards for completions.
 
         Args:
             completions: List of model completions (predicted HTML tables)
-            html_table: List of ground truth HTML tables from the dataset
+            solution: List of ground truth HTML tables from the dataset (standard field name)
+            html_table: List of ground truth HTML tables (alternative field name, for backward compatibility)
         """
+        # Support both 'solution' (standard) and 'html_table' (legacy) field names
+        gt_tables = solution if solution is not None else html_table
+        if gt_tables is None:
+            raise ValueError("Either 'solution' or 'html_table' must be provided as ground truth")
         rewards = []
-        for completion, gt in zip(completions, html_table):
+        for completion, gt in zip(completions, gt_tables):
             pred_html = self.extract_html_from_completion(completion)
             grits_score = self.compute_grits(pred_html, gt)
             rewards.append(grits_score)
@@ -998,9 +1008,13 @@ class TableLengthPenalty(ORM):
             return table_match.group(1)
         return completion.strip()
 
-    def __call__(self, completions, html_table, **kwargs) -> List[float]:
+    def __call__(self, completions, solution=None, html_table=None, **kwargs) -> List[float]:
+        # Support both 'solution' (standard) and 'html_table' (legacy) field names
+        gt_tables = solution if solution is not None else html_table
+        if gt_tables is None:
+            raise ValueError("Either 'solution' or 'html_table' must be provided as ground truth")
         rewards = []
-        for completion, gt in zip(completions, html_table):
+        for completion, gt in zip(completions, gt_tables):
             # Extract table from completion
             pred_table = self.extract_table(completion)
 
